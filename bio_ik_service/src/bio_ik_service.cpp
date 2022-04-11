@@ -25,35 +25,38 @@
 #include <thread>
 #include <unordered_map>
 
+
 static moveit::core::RobotModelPtr
 getRobotModel(std::string robot_description) {
-  if (robot_description.empty()) {
-    robot_description = "robot_description";
-  }
-
-  static std::mutex mutex;
-  std::lock_guard<std::mutex> lock(mutex);
-  static std::unordered_map<std::string, moveit::core::RobotModelPtr>
-      robot_models;
+    // Default to standard ROS robot_description
+    if (robot_description.empty()) {
+        robot_description = "robot_description";
+    }
   
-  if (robot_models.find(robot_description) == robot_models.end()) {
-      ROS_INFO("loading robot model %s", robot_description.c_str());
-      static std::unordered_map<std::string, robot_model_loader::RobotModelLoader>
-          loaders;
-      loaders.emplace(robot_description, robot_description);
-      robot_models[robot_description] = loaders[robot_description].getModel();
-
-      if (!robot_models[robot_description]) {
-          ROS_ERROR("failed to load robot model %s", robot_description.c_str());
-      }
-  }
+    static std::mutex mutex;
+    std::lock_guard<std::mutex> lock(mutex);
+    static std::unordered_map<std::string, moveit::core::RobotModelPtr>
+        robot_models;
+    
+    if (robot_models.find(robot_description) == robot_models.end()) {
+        ROS_INFO("loading robot model %s", robot_description.c_str());
+        static std::unordered_map<std::string, robot_model_loader::RobotModelLoader>
+            loaders;
+        loaders.emplace(robot_description, robot_description);
+        robot_models[robot_description] = loaders[robot_description].getModel();
   
-  return robot_models[robot_description];
+        if (!robot_models[robot_description]) {
+            ROS_ERROR("failed to load robot model %s", robot_description.c_str());
+        }
+    }
+    
+    return robot_models[robot_description];
 }
 
 
 static planning_scene::PlanningSceneConstPtr
 getPlanningScene(std::string robot_description) {
+    // Default to standard ROS robot_description
     if (robot_description.empty()) {
         robot_description = "robot_description";
     }
@@ -68,6 +71,7 @@ getPlanningScene(std::string robot_description) {
     if (planning_scene_monitors.find(robot_description) ==
         planning_scene_monitors.end()) {
         ROS_INFO("connecting to planning scene");
+        
         planning_scene_monitors[robot_description] =
             planning_scene_monitor::PlanningSceneMonitorPtr(
                 new planning_scene_monitor::PlanningSceneMonitor(
@@ -87,6 +91,8 @@ getPlanningScene(std::string robot_description) {
 static bool getPositionIK(moveit_msgs::GetPositionIK::Request &request,
                           moveit_msgs::GetPositionIK::Response &response,
                           bool approximate) {
+
+    // Load the default robot_description
     auto robot_model = getRobotModel("");
     
     if (!robot_model) {
@@ -105,12 +111,21 @@ static bool getPositionIK(moveit_msgs::GetPositionIK::Request &request,
   
     moveit::core::RobotState robot_state(robot_model);
   
+    // robot state is set to default values
+    // From the MoveIt documentation, "The default position is 0, or if that is 
+    // not within bounds then half way between min and max bound." 
     robot_state.setToDefaultValues();
+    
+    // Then, updated all transforms
+    // TODO: Does this actually get the current state of the robot, different
+    //       than the setToDefaultValues() above?
     robot_state.update();
   
     if (!request.ik_request.robot_state.joint_state.name.empty() ||
         !request.ik_request.robot_state.multi_dof_joint_state.joint_names
              .empty()) {
+        // Convert a robot state msg (with accompanying extra transforms) to a 
+        // MoveIt! robot state.
         moveit::core::robotStateMsgToRobotState(request.ik_request.robot_state,
                                                 robot_state);
         robot_state.update();
@@ -121,55 +136,85 @@ static bool getPositionIK(moveit_msgs::GetPositionIK::Request &request,
     bio_ik::BioIKKinematicsQueryOptions ik_options;
     ik_options.return_approximate_solution = approximate;
   
+    // Set up a callback on checking for collisions and check the current 
+    // robot state
     moveit::core::GroupStateValidityCallbackFn callback;
     if (request.ik_request.avoid_collisions) {
+        ROS_INFO("Request includes avoid_collisions");
         callback = [](moveit::core::RobotState *state,
                       const moveit::core::JointModelGroup *group,
                       const double *values) {
+            ROS_DEBUG("Checking for collisions");
             auto planning_scene = getPlanningScene("");
             state->setJointGroupPositions(group, values);
             state->update();
+            
+            bool inCollision;
+            inCollision = planning_scene->isStateColliding(*state, group->getName());
+            ROS_INFO('Collisions? -- %s', x ? "true" : "false");
+            
+            // Returns false if everything is okay
             return !planning_scene ||
                    !planning_scene->isStateColliding(*state, group->getName());
         };
     }
   
     if (request.ik_request.pose_stamped_vector.empty()) {
+        // We didn't get any pose goals?
+        ROS_DEBUG("No pose goals?");
         if (request.ik_request.ik_link_name.empty()) {
-          success = robot_state.setFromIK(
-              joint_model_group, request.ik_request.pose_stamped.pose,
-              request.ik_request.timeout.toSec(),
-              callback, ik_options);
+            // Try to compute the IK solution, return true if successful
+            success = robot_state.setFromIK(joint_model_group, 
+                                            request.ik_request.pose_stamped.pose,
+                                            request.ik_request.timeout.toSec(),
+                                            callback, 
+                                            ik_options);
         } else {
-          success = robot_state.setFromIK(
-              joint_model_group, request.ik_request.pose_stamped.pose,
-              request.ik_request.ik_link_name, request.ik_request.timeout.toSec(),
-              callback, ik_options);
+            // Try to compute the IK solution, return true if successful
+            success = robot_state.setFromIK(joint_model_group, 
+                                            request.ik_request.pose_stamped.pose,
+                                            request.ik_request.ik_link_name, 
+                                            request.ik_request.timeout.toSec(),
+                                            callback, 
+                                            ik_options);
         }
     } else {
+        // We got pose goals. Add them to vector of poses in the IK request
+        ROS_DEBUG("Got pose goals");
         EigenSTL::vector_Isometry3d poses;
         poses.reserve(request.ik_request.pose_stamped_vector.size());
         
         for (auto &pose : request.ik_request.pose_stamped_vector) {
+            ROS_DEBUG(pose.pose);
             poses.emplace_back();
             tf::poseMsgToEigen(pose.pose, poses.back());
         }
         
         if (request.ik_request.ik_link_names.empty()) {
+            // If a link-name is not provided, use the end-effector
             std::vector<std::string> end_effector_names;
             joint_model_group->getEndEffectorTips(end_effector_names);
-            success = robot_state.setFromIK(
-                joint_model_group, poses, end_effector_names,
-                request.ik_request.timeout.toSec(),
-                callback, ik_options);
+            
+            // Try to compute the IK solution, return true if successful
+            success = robot_state.setFromIK(joint_model_group, 
+                                            poses, 
+                                            end_effector_names,
+                                            request.ik_request.timeout.toSec(),
+                                            callback, 
+                                            ik_options);
         } else {
-            success = robot_state.setFromIK(
-                joint_model_group, poses, request.ik_request.ik_link_names,
-                request.ik_request.timeout.toSec(),
-                callback, ik_options);
+            // Link name were provided, so use them
+            // Try to compute the IK solution, return true if successful
+            success = robot_state.setFromIK(joint_model_group, 
+                                            poses, 
+                                            request.ik_request.ik_link_names,
+                                            request.ik_request.timeout.toSec(),
+                                            callback, 
+                                            ik_options);
         }
     }
-  
+    
+    // Update the robot state
     robot_state.update();
   
     moveit::core::robotStateToRobotStateMsg(robot_state, response.solution);
