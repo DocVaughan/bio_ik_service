@@ -21,6 +21,8 @@
 #include <moveit/planning_scene/planning_scene.h>
 #include <moveit/planning_scene_monitor/planning_scene_monitor.h>
 
+#include <ros/console.h>
+
 #include <mutex>
 #include <thread>
 #include <unordered_map>
@@ -151,7 +153,7 @@ static bool getPositionIK(moveit_msgs::GetPositionIK::Request &request,
             
             bool inCollision;
             inCollision = planning_scene->isStateColliding(*state, group->getName());
-            ROS_INFO('Collisions? -- %s', x ? "true" : "false");
+            ROS_INFO_STREAM("In Collision? - " << inCollision);
             
             // Returns false if everything is okay
             return !planning_scene ||
@@ -161,7 +163,7 @@ static bool getPositionIK(moveit_msgs::GetPositionIK::Request &request,
   
     if (request.ik_request.pose_stamped_vector.empty()) {
         // We didn't get any pose goals?
-        ROS_DEBUG("No pose goals?");
+        ROS_INFO("No pose goals?");
         if (request.ik_request.ik_link_name.empty()) {
             // Try to compute the IK solution, return true if successful
             success = robot_state.setFromIK(joint_model_group, 
@@ -180,12 +182,12 @@ static bool getPositionIK(moveit_msgs::GetPositionIK::Request &request,
         }
     } else {
         // We got pose goals. Add them to vector of poses in the IK request
-        ROS_DEBUG("Got pose goals");
+        ROS_INFO("Got pose goals");
         EigenSTL::vector_Isometry3d poses;
         poses.reserve(request.ik_request.pose_stamped_vector.size());
         
         for (auto &pose : request.ik_request.pose_stamped_vector) {
-            ROS_DEBUG(pose.pose);
+            ROS_INFO_STREAM("Pose: " << pose.pose);
             poses.emplace_back();
             tf::poseMsgToEigen(pose.pose, poses.back());
         }
@@ -337,6 +339,8 @@ static void convertGoals(const bio_ik_msgs::IKRequest &ik_request,
 
 static bool getBioIK(bio_ik_msgs::GetIK::Request &request,
                      bio_ik_msgs::GetIK::Response &response) {
+    
+    ROS_DEBUG("getBioIK Called");
     auto robot_model = getRobotModel("");
     if (!robot_model) {
       response.ik_response.error_code.val =
@@ -377,21 +381,31 @@ static bool getBioIK(bio_ik_msgs::GetIK::Request &request,
   
     moveit::core::GroupStateValidityCallbackFn callback;
     if (request.ik_request.avoid_collisions) {
+        ROS_INFO("Request includes avoid_collisions");
         callback = [](moveit::core::RobotState *state,
                       const moveit::core::JointModelGroup *group,
                       const double *values) {
             auto planning_scene = getPlanningScene("");
             state->setJointGroupPositions(group, values);
             state->update();
+
+            bool inCollision;
+            inCollision = planning_scene->isStateColliding(*state, group->getName());
+            ROS_INFO_STREAM("In Collision? - " << inCollision);
+            
             return !planning_scene ||
                    !planning_scene->isStateColliding(*state, group->getName());
+                   
+
         };
     }
   
-    bool success = robot_state.setFromIK(
-        joint_model_group, EigenSTL::vector_Isometry3d(),
-        std::vector<std::string>(), request.ik_request.timeout.toSec(),
-        callback, ik_options);
+    bool success = robot_state.setFromIK(joint_model_group, 
+                                         EigenSTL::vector_Isometry3d(),
+                                         std::vector<std::string>(), 
+                                         request.ik_request.timeout.toSec(),
+                                         callback, 
+                                         ik_options);
   
     robot_state.update();
   
@@ -412,7 +426,7 @@ static bool getBioIK(bio_ik_msgs::GetIK::Request &request,
 int main(int argc, char **argv) {
     ros::init(argc, argv, "bio_ik");
   
-    ROS_INFO("bio ik service");
+    ROS_INFO("Starting bio-ik service");
   
     ros::NodeHandle node_handle;
   
