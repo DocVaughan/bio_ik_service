@@ -36,3 +36,7 @@ include_directories(
 add_executable(bio_ik_service src/bio_ik_service.cpp)
 add_dependencies(bio_ik_service ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 target_link_libraries(bio_ik_service ${catkin_LIBRARIES} ${Boost_LIBRARIES})
+
+install(DIRECTORY launch/
+  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/launch
+  PATTERN ".svn" EXCLUDE)

@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<launch>
+
+  <node name="bio_ik_service" pkg="bio_ik_service" type="bio_ik_service" respawn="false" output="screen">
+  </node>
+
+</launch>
