@@ -20,8 +20,7 @@
 
 #include <moveit/planning_scene/planning_scene.h>
 #include <moveit/planning_scene_monitor/planning_scene_monitor.h>
-
-#include <ros/console.h>
+#include <moveit/move_group_interface/move_group_interface.h>
 
 #include <mutex>
 #include <thread>
@@ -155,7 +154,7 @@ static bool getPositionIK(moveit_msgs::GetPositionIK::Request &request,
             inCollision = planning_scene->isStateColliding(*state, group->getName());
             ROS_INFO_STREAM("In Collision? - " << inCollision);
             
-            // Returns false if everything is okay
+            // Returns false if everything is okay?
             return !planning_scene ||
                    !planning_scene->isStateColliding(*state, group->getName());
         };
@@ -343,17 +342,14 @@ static bool getBioIK(bio_ik_msgs::GetIK::Request &request,
     ROS_DEBUG("getBioIK Called");
     auto robot_model = getRobotModel("");
     if (!robot_model) {
-      response.ik_response.error_code.val =
-          moveit_msgs::MoveItErrorCodes::INVALID_OBJECT_NAME;
-      return true;
+        response.ik_response.error_code.val = moveit_msgs::MoveItErrorCodes::INVALID_OBJECT_NAME;
+        return true;
     }
   
-    auto joint_model_group =
-        robot_model->getJointModelGroup(request.ik_request.group_name);
+    auto joint_model_group = robot_model->getJointModelGroup(request.ik_request.group_name);
     if (!joint_model_group) {
-      response.ik_response.error_code.val =
-          moveit_msgs::MoveItErrorCodes::INVALID_GROUP_NAME;
-      return true;
+        response.ik_response.error_code.val = moveit_msgs::MoveItErrorCodes::INVALID_GROUP_NAME;
+        return true;
     }
   
     static std::mutex mutex;
@@ -367,6 +363,7 @@ static bool getBioIK(bio_ik_msgs::GetIK::Request &request,
     if (!request.ik_request.robot_state.joint_state.name.empty() ||
         !request.ik_request.robot_state.multi_dof_joint_state.joint_names
              .empty()) {
+             
         moveit::core::robotStateMsgToRobotState(request.ik_request.robot_state,
                                                 robot_state);
         robot_state.update();
@@ -380,8 +377,9 @@ static bool getBioIK(bio_ik_msgs::GetIK::Request &request,
     convertGoals(request.ik_request, ik_options);
   
     moveit::core::GroupStateValidityCallbackFn callback;
+    
     if (request.ik_request.avoid_collisions) {
-        ROS_INFO("Request includes avoid_collisions");
+        ROS_DEBUG("Request includes avoid_collisions");
         callback = [](moveit::core::RobotState *state,
                       const moveit::core::JointModelGroup *group,
                       const double *values) {
@@ -390,13 +388,18 @@ static bool getBioIK(bio_ik_msgs::GetIK::Request &request,
             state->update();
 
             bool inCollision;
-            inCollision = planning_scene->isStateColliding(*state, group->getName());
-            ROS_INFO_STREAM("In Collision? - " << inCollision);
+            bool verbose_collision_check = true;
+            inCollision = planning_scene->isStateColliding(*state, group->getName(), verbose_collision_check);
+            std::vector<std::string> links = {};
             
+            if (inCollision) {
+                ROS_ERROR("Solution failed due to link collision");
+                //ROS_WARN(planning_scene->getCollidingLinks(links));
+            }
+            
+            // Returns false if everything is okay
             return !planning_scene ||
                    !planning_scene->isStateColliding(*state, group->getName());
-                   
-
         };
     }
   
